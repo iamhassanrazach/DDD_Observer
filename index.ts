@@ -1,112 +1,113 @@
-import { createPrice, createQuantity, createStockLevel, createProduct, reduceStock } from "./src/domain/product/factories.js"
-import { observers, emit } from "./src/infrastructure/observers/observer.js"
-import { sendEmailMock } from "./src/infrastructure/observers/email.js"
-import { saveToDatabaseMock } from "./src/infrastructure/observers/database.js"
+import { v4 as uuidv4 } from "uuid"
 
-// ─── Register Observers ───────────────────────────────────────────────────────
+type ProductName = "Shoes" | "Shirt" | "Pants"
+
+type PriceNumber = number & { readonly __brand: unique symbol }
+
+function createPrice(value: number): PriceNumber {
+	if (value < 0) {
+		throw new Error("Value must be positive")
+	}
+
+	return value as PriceNumber
+}
+
+// factory function
+function createProduct(
+	id: string,
+	name: ProductName,
+	price: PriceNumber,
+): Product {
+	if (name !== "Shoes" && name !== "Shirt" && name !== "Pants") {
+		throw new Error("Name must be Shoes, Shirt, or Pants")
+	}
+
+	if (!id) {
+		throw new Error("Id must be provided")
+	}
+
+	if (price < 0) {
+		throw new Error("Price must be positive")
+	}
+
+	return {
+		id: uuidv4() as ProductId,
+		name,
+		price,
+	}
+}
+type Product = {
+	id: ProductId
+	name: ProductName
+	price: PriceNumber
+}
+
+type ProductId = string & { readonly __brand: unique symbol }
+type StockLevel = number & { readonly __brand: unique symbol }
+
+type ProductCreatedEvent = {
+	readonly type: "ProductCreated"
+	readonly productId: ProductId
+	readonly name: ProductName
+	readonly price: PriceNumber
+}
+
+type PriceUpdatedEvent = {
+	readonly type: "PriceUpdated"
+	readonly productId: ProductId
+	readonly oldPrice: PriceNumber
+	readonly newPrice: PriceNumber
+}
+
+// ✅ Precise — the event carries what changed and why
+type StockReducedEvent = {
+	readonly type: "StockReduced"
+	readonly productId: ProductId
+	readonly newLevel: StockLevel
+	readonly quantity: Quantity
+}
+type DomainEvent = ProductCreatedEvent | PriceUpdatedEvent | StockReducedEvent
+
+type Quantity = number & { readonly __brand: unique symbol }
+
+type Observer = (event: DomainEvent) => void
+
+const observers: Observer[] = []
+
+// first product (easy construction)
+const product1: Product = {
+	id: uuidv4() as ProductId,
+	name: "Shoes",
+	price: createPrice(100),
+}
+
+console.log(product1)
+
+const sendEmailMock: Observer = (event: DomainEvent) => {
+	console.log(`Email sent for event ${event.type}`)
+}
+
+const saveToDatabaseMock: Observer = (event: DomainEvent) => {
+	console.log(`Data saved to database for event ${event.type}`)
+}
 observers.push(sendEmailMock)
 observers.push(saveToDatabaseMock)
 
-console.log("=== E-Commerce Inventory Domain — DDD + Observer Pattern ===\n")
-
-// ─── Test 1: Valid product creation ──────────────────────────────────────────
-console.log("--- Test 1: Creating valid products ---")
-
 try {
-  const shoes = createProduct("Shoes", createPrice(100), createStockLevel(20))
-  console.log("✅ Created:", shoes)
-  emit({ type: "ProductCreated", productId: shoes.id, name: shoes.name, price: shoes.price, stock: shoes.stock })
-
-  const shirt = createProduct("Shirt", createPrice(45), createStockLevel(8))
-  console.log("✅ Created:", shirt)
-  emit({ type: "ProductCreated", productId: shirt.id, name: shirt.name, price: shirt.price, stock: shirt.stock })
+	const product2 = createProduct(uuidv4(), "Shirt", createPrice(50))
+	console.log(product2)
+	observers.forEach((observer) =>
+		observer({
+			type: "ProductCreated",
+			productId: product2.id,
+			name: product2.name,
+			price: product2.price,
+		}),
+	)
 } catch (error) {
-  console.error(error instanceof Error ? error.message : "Unknown error")
+	if (error instanceof Error) {
+		console.error(error.message)
+	} else {
+		console.error("Unknown error")
+	}
 }
-
-// ─── Test 2: Reduce stock — normal sale ──────────────────────────────────────
-console.log("\n--- Test 2: Normal stock reduction ---")
-
-try {
-  const pants = createProduct("Pants", createPrice(80), createStockLevel(10))
-  const quantity = createQuantity(3)
-  const updated = reduceStock(pants, quantity)
-  console.log(`✅ Stock reduced from ${pants.stock} → ${updated.stock}`)
-  emit({ type: "StockReduced", productId: updated.id, newLevel: updated.stock, quantity })
-} catch (error) {
-  console.error(error instanceof Error ? error.message : "Unknown error")
-}
-
-// ─── Test 3: Low stock warning (triggers observer alert) ─────────────────────
-console.log("\n--- Test 3: Low stock warning ---")
-
-try {
-  const shirt = createProduct("Shirt", createPrice(60), createStockLevel(5))
-  const quantity = createQuantity(2)
-  const updated = reduceStock(shirt, quantity)
-  console.log(`✅ Stock reduced from ${shirt.stock} → ${updated.stock} (low stock!)`)
-  emit({ type: "StockReduced", productId: updated.id, newLevel: updated.stock, quantity })
-} catch (error) {
-  console.error(error instanceof Error ? error.message : "Unknown error")
-}
-
-// ─── Test 4: Out of stock (triggers unavailable alert) ───────────────────────
-console.log("\n--- Test 4: Out of stock ---")
-
-try {
-  const shoes = createProduct("Shoes", createPrice(120), createStockLevel(2))
-  const quantity = createQuantity(2)
-  const updated = reduceStock(shoes, quantity)
-  console.log(`✅ Stock reduced from ${shoes.stock} → ${updated.stock} (out of stock!)`)
-  emit({ type: "StockReduced", productId: updated.id, newLevel: updated.stock, quantity })
-} catch (error) {
-  console.error(error instanceof Error ? error.message : "Unknown error")
-}
-
-// ─── Test 5: IMPOSSIBLE — stock goes negative (business rule violation) ───────
-console.log("\n--- Test 5: Impossible — order exceeds available stock ---")
-
-try {
-  const pants = createProduct("Pants", createPrice(75), createStockLevel(3))
-  const quantity = createQuantity(10)
-  const updated = reduceStock(pants, quantity) // should throw
-  emit({ type: "StockReduced", productId: updated.id, newLevel: updated.stock, quantity })
-} catch (error) {
-  console.error("❌ Caught error:", error instanceof Error ? error.message : "Unknown error")
-}
-
-// ─── Test 6: IMPOSSIBLE — negative price ─────────────────────────────────────
-console.log("\n--- Test 6: Impossible — negative price ---")
-
-try {
-  const shoes = createProduct("Shoes", createPrice(-50), createStockLevel(10)) // should throw
-  console.log(shoes)
-} catch (error) {
-  console.error("❌ Caught error:", error instanceof Error ? error.message : "Unknown error")
-}
-
-// ─── Test 7: IMPOSSIBLE — invalid product name ───────────────────────────────
-console.log("\n--- Test 7: Impossible — invalid product name ---")
-
-try {
-  // @ts-expect-error intentionally wrong type to test runtime guard
-  const product = createProduct("Hat", createPrice(30), createStockLevel(5))
-  console.log(product)
-} catch (error) {
-  console.error("❌ Caught error:", error instanceof Error ? error.message : "Unknown error")
-}
-
-// ─── Test 8: Price update event ──────────────────────────────────────────────
-console.log("\n--- Test 8: Price update event ---")
-
-try {
-  const shirt = createProduct("Shirt", createPrice(50), createStockLevel(15))
-  const oldPrice = shirt.price
-  const newPrice = createPrice(65)
-  console.log(`✅ Price updated: $${oldPrice} → $${newPrice}`)
-  emit({ type: "PriceUpdated", productId: shirt.id, oldPrice, newPrice })
-} catch (error) {
-  console.error(error instanceof Error ? error.message : "Unknown error")
-}
-
-console.log("\n=== All tests complete ===")
